@@ -1,0 +1,233 @@
+---
+title: |
+  \begin{center}
+  {\Large \textbf{ALMA MATER STUDIORUM – UNIVERSITA’ DI BOLOGNA}}\\[1.5cm]
+  {\large DIPARTIMENTO DI SCIENZE STATISTICHE}\\
+  {\large “PAOLO FORTUNATI”}\\[2cm]
+  {\large Corso di Laurea in Scienze Statistiche}\\[2cm]
+  \end{center}
+  \vfill
+  \begin{center}
+  {\Huge \textbf{Disuguaglianze sanitarie in Europa}}\\[0.5cm]
+  {\Large (Utilizzo Statistico di Banche Dati Economiche Online)}
+  \end{center}
+  \vfill
+author: "Davide Calderoni, Chiara Cupioli, Matteo Parma, Leonardo Giordani, "
+date: today
+date-format: long
+format: pdf
+output:
+  pdf_document:
+    latex_engine: xelatex
+    template: null
+    keep_tex: true
+geometry: margin=1in
+---
+  
+```{r, echo=FALSE, message=FALSE}
+library(ggplot2)  
+library(eurostat) 
+library(kableExtra)
+library(mice)
+library(gt)
+```
+
+\newpage
+
+# Introduzione
+
+Commento da aggiungere
+
+# Dati
+
+Commento dei dati
+
+```{r, echo=FALSE, results ='hide'}
+
+terrorismo <- WDI(country = "IT", indicator = "PV.EST", start = 2003, end = 2023)
+terrorismo <- subset(terrorismo, select = c(-country, -iso2c, -iso3c))
+
+omicidi <- WDI(country = "IT", indicator = "VC.IHR.PSRC.P5", start = 2003, end = 2023)
+omicidi <- subset(omicidi, select = c(-country, -iso2c, -iso3c))
+
+spesa_militare <- WDI(country="IT", indicator = "MS.MIL.XPND.GD.ZS", start = 2003, end = 2023)
+spesa_militare <- subset(spesa_militare, select = c(-country, -iso2c, -iso3c))
+
+scuola_secondaria <- WDI(country="IT", indicator = "SE.SEC.ENRR", start = 2003, end = 2023)
+scuola_secondaria <- subset(scuola_secondaria, select = c(-country, -iso2c, -iso3c))
+
+università <- WDI(country = "IT", indicator = "SE.TER.ENRR", start = 2003, end = 2023)
+università <- subset(università, select = c(-country, -iso2c, -iso3c))
+
+X_table <- merge(c(scuola_secondaria, università, terrorismo, spesa_militare), omicidi, by = "year")
+X_table <- subset(X_table, select = c(-year.1, -year.2, -year.3))
+
+imputed <- mice(X_table, method = "pmm", m = 1)
+X_table <- complete(imputed)
+```
+
+```{r, echo=FALSE}
+kable(head(X_table), 
+  col.names = c("Anno", "Scuola secondaria", "Università", "Terrorismo", "Spesa militare", "Tasso omicidi")) %>%
+  row_spec(0, bold = TRUE, color = "yellow", background = "black")
+```
+
+## Descrizione variabili
+
+\begin{itemize}
+  \item \textbf{Anno}: anno di rilevazione delle serie storiche analizzate;
+  \item \textbf{Livello istruzione scuola secondaria} : percentuale di iscritti alla scuola secondaria rispetto alla popolazione dell'età corrispondente al percorso tradizionale (i valori possono essere superiori a 100 in quanto ci sono persone che possono effettuare dei corsi serali di scuola secondaria e questi soggetti vengono conteggiati anche se sono di età superiore a quella presa in considerazione);
+\item \textbf{Livello istruzione scuola terziaria} : percentuale di iscritti alla scuola terziaria, ovvero corsi post diploma di maturità o università, rispetto alla popolazione totale di quella fascia d'età;
+  \item \textbf{Stabilità politica e assenza di violenza/terrorismo} : stima che misura le percezioni di probabilità di instabilità politica e di violenza riguardo al terrorismo, può assumere valori da -2.5 a 2.5;
+  \item \textbf{Spesa militare} : percentuale rispetto al PIL della spesa militare annua in Italia;
+  \item \textbf{Tasso di omicidi} : numero di omicidi intenzionali su 100.000 persone avvenuti in un anno.
+\end{itemize}
+
+# Elaborazione dati
+
+```{r, echo=FALSE}
+modello <- lm( VC.IHR.PSRC.P5 ~ PV.EST + SE.SEC.ENRR + SE.TER.ENRR + MS.MIL.XPND.GD.ZS, data = X_table)
+```
+
+## Differenza di genere
+
+```{r, echo=FALSE, results='hide', warning=FALSE}
+omicidi_f <- WDI(country = "IT", indicator = "VC.IHR.PSRC.FE.P5", start = 2003, end = 2023)
+omicidi_m <- WDI(country = "IT", indicator = "VC.IHR.PSRC.MA.P5", start = 2003, end = 2023)
+imputed <- mice(omicidi_f, method = "pmm", m = 1)
+omicidi_f <- complete(imputed)
+imputed <- mice(omicidi_m, method = "pmm", m = 1)
+omicidi_m <- complete(imputed)
+```
+
+Facendo un analisi sul tasso di omicidi, si vuole analizzare questo tasso in relazione al genere: quindi, prima di osservare quali fattori esterni possono influenzare il tasso di omicidi preso in considerazione, si effettua una distinzione in base a chi ha commesso l'omicidio, ovvero creando una suddivisione tra maschi e femmine: 
+  
+```{r, echo=FALSE}
+plot(omicidi_m$year, omicidi_m$VC.IHR.PSRC.MA.P5, type = "l", col = "blue", ylim = c(0, max(omicidi_m$VC.IHR.PSRC.MA.P5, omicidi_f$VC.IHR.PSRC.FE.P5)), 
+     xlab = "Anno", ylab = "Tasso di omicidi", main = "Tasso di omicidi: differenze di genere")
+
+lines(omicidi_f$year, omicidi_f$VC.IHR.PSRC.FE.P5, col = "red")
+
+legend("topright", legend = c("Maschi", "Femmine"), col = c("blue", "red"), lty = 1)
+
+```
+
+Dal grafico si evidenzia come gli uomini siano più propensi a commettere omicidi intenzionali rispetto alle donne, anche se si nota come il dato riguardante i maschi sia in forte calo, andando ad assottigliare sempre più il gap con il tasso di omicidi commessi da donne.
+
+## Modello di regressione multipla
+Il modello considerato in questo elaborato è un modello di regressione multipla a 4 regressori per la variabile dipendente "Tasso di omicidi" numerati in ordine in base alla tabella soprastante, in particolare l'equazione del modello diventa:
+
+$$
+Y = `r coefficients(modello)[1]`+ `r coefficients(modello)[2]`X_1 `r +  coefficients(modello)[3]` X_2 +`r coefficients(modello)[4]` X_3 `r + coefficients(modello)[5]` X_4 + \varepsilon
+$$
+\newline
+Ora in seguito si va ad analizzare ogni relazione specifica tra ogni regressore e il tasso di omicidi.
+
+# Risultati
+
+## Relazione tra tasso di istruzione della scuola secondaria e il tasso di omicidi
+
+```{r, echo=FALSE}
+plot(X_table$SE.SEC.ENRR, X_table$VC.IHR.PSRC.P5,
+     xlab = "Tasso di scuola secondaria",
+     ylab = "Tasso di omicidi")
+mod3 <- lm(X_table$VC.IHR.PSRC.P5~X_table$SE.SEC.ENRR)
+abline(mod3, col="lightgreen", lwd=2)
+```
+
+Questo grafico, rispetto a quello precedente, è provvisto di una retta di regressione e denota come all'aumentare del tasso di scuola secondaria diminuisca il tasso di omicidi in Italia, denotando un coefficiente di regressione negativo, infatti anche l'indice di determinazione lineare
+
+$$
+R^2 = `r cor(X_table$SE.SEC.ENRR, X_table$VC.IHR.PSRC.P5)`
+$$
+
+ha un valore in modulo molto elevato, evidenziando una forte relazione tra i due parametri.
+
+\newpage
+
+## Relazione tra tasso di iscrizione all'università e il tasso di omicidi
+
+```{r, echo=FALSE, warning=FALSE}
+
+df <- data.frame(
+  università = X_table$SE.TER.ENRR,
+  omicidi = X_table$VC.IHR.PSRC.P5
+)
+
+ggplot(df, aes(università, omicidi)) +
+  stat_density_2d(aes(fill = ..density..), geom="tile", contour = FALSE) +
+  scale_fill_gradient(low = "white", high = "red") +
+  labs(
+    x = "università",
+    y = "Tasso di Omicidi"
+  ) +
+  theme_minimal()
+
+```
+
+Dal grafico di densità preso in considerazione si può notare come ci sia una curva avente due intensità molto differenti, con una parte crescente avente un colore molto acceso e una parte decrescente con un colore meno deciso e di lunghezza inferiore a quella precedentemente descritta. Infatti la funzione di densità non crea una scia lungilinea ma ha una forma curva che non induce a notare alcuna forma di dipendenza forte, ottenendo una concentrazione non uniforme ma non troppo dispersiva, infatti l'indice di determinazione lineare ha un valore pari a:
+
+$$
+R^2 = `r cor(X_table$SE.TER.ENRR, X_table$VC.IHR.PSRC.P5)`
+$$
+valore sicuramente contenuto ma non completamente privo di significato.
+
+\newpage
+
+## Relazione tra il tasso di omicidi e la spesa militare
+
+```{r, echo=FALSE}
+df <- data.frame(
+  anno = X_table$year,
+  spesa_militare = X_table$MS.MIL.XPND.GD.ZS,
+  omicidi = X_table$VC.IHR.PSRC.P5,
+  differenza = X_table$MS.MIL.XPND.GD.ZS - X_table$VC.IHR.PSRC.P5
+  )
+
+kable(df, 
+  col.names = c("Anno", "Spesa militare", "Tasso omicidi", "Differenza")) %>%
+  row_spec(0, bold = TRUE, color = "yellow", background = "black") %>%
+  kable_styling(position = "center", latex_options = "HOLD_position")
+```
+
+In questa tabella si pone l'attenzione sulle due variabili 'Spesa militare' e 'Tasso di omicidi': si nota come entrambi i tasso diminuiscano all'aumentare degli anni, mentre negli ultimi anni si nota una crescita della spesa militare non accompagnata dalla crescita del tasso di omicidi, infatti l'indice di determinazione lineare considerando tutti i dati è pari a
+
+$$
+  R^2 = `r cor(X_table$MS.MIL.XPND.GD.ZS, X_table$VC.IHR.PSRC.P5)`
+$$
+  Questo valore molto basso è dovuto alle ultime osservazioni che influenzano in modo negativo il grafico: si tratta delle osservazioni avvenute dal 2020 al 2023, dove con l'effetto del Covid-19 si hanno avuto molte meno interazioni tra le persone, dove la distanza tra esse ha sovrastato il tutto e quindi si è creato un distacco tra la vita delle persone e il contesto in cui esse vivono, creando indipendenza. Perciò se escludiamo le osservazioni condizionate dagli effetti del Covid-19 otteniamo un indice di determinazione lineare pari a 
+
+```{r, echo=FALSE}
+omicidi <- WDI(country = "IT", indicator = "VC.IHR.PSRC.P5", start = 2005, end = 2019)
+spesa_militare <- WDI(country="IT", indicator = "MS.MIL.XPND.GD.ZS", start = 2005, end = 2019)
+```
+
+$$
+R^2 = `r cor(spesa_militare$MS.MIL.XPND.GD.ZS, omicidi$VC.IHR.PSRC.P5)`
+$$
+valore molto differente rispetto a quello sovrastante e più rappresentativo della realtà quotidiana che non deve confrontarsi con eventi straordinari.
+
+\newpage
+
+## Relazione tra tasso di omicidi e tasso di terrorismo
+```{r, echo=FALSE}
+plot(X_table$VC.IHR.PSRC.P5, X_table$PV.EST,
+     xlab = "Tasso di terrorismo",
+     ylab = "Tasso di omicidi")
+
+```
+
+Come si può notare dal grafico soprastante, i punti non seguono una linea ben precisa, infatti si può notare che l'indice di determinazione lineare è pari a
+
+$$
+  R^2 = `r cor(X_table$VC.IHR.PSRC.P5, X_table$PV.EST)`
+$$
+  
+  valore molto basso che conferma ciò che è stato detto in precedenza.
+
+# Conclusioni
+
+Commento di conclusioni
+
+# Referenze
+Tutti i dati e le descrizioni dei dati sono stati estrapolati dall'Eurostat.
