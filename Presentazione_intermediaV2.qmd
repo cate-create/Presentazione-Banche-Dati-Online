@@ -1,0 +1,258 @@
+---
+title: "Rinuncia alle cure e disuguaglianze in Italia"
+subtitle: "Analisi sui microdati EHIS 2019"
+author: "Gruppo A"
+format: 
+  beamer:
+    theme: Madrid
+    colortheme: whale
+    slide-level: 2
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r}
+# --- SETUP UNIVERSALE ---
+if (!require("here")) install.packages("here")
+library(here)
+library(tidyverse)
+library(survey)
+
+# R cercherà il file nella stessa cartella dove hai salvato questo file .qmd
+# Non importa se il PC è Windows o Mac, o se l'utente è "Utente" o "Studente"
+percorso_file <- here("EHIS_Microdati_2019.txt")
+
+# Controllo di sicurezza per i tuoi compagni
+if (!file.exists(percorso_file)) {
+  stop("ERRORE: Il file 'EHIS_Microdati_2019.txt' non è nella cartella del progetto. 
+        Assicurati che il dataset e questo file .qmd siano insieme!")
+}
+
+# Caricamento
+df <- read_delim(percorso_file, delim = "\t") 
+# 3. Pulizia e Creazione Variabili
+# --- 3. Pulizia e Creazione Variabili ---
+
+# Creiamo df_analisi partendo dal df originale
+df_analisi <- df %>%
+  # Selezioniamo solo le colonne necessarie per alleggerire e ridurre errori
+  select(WGT, BIRTHPLACE2, UN1A, UN1B, RIP, MH1A:MH1H) %>%
+  # Forza la conversione in numeri ignorando i messaggi di warning
+  mutate(across(everything(), ~suppressWarnings(as.numeric(as.character(.)))))
+
+# Ora creiamo le tue variabili specifiche
+df_analisi <- df_analisi %>%
+  mutate(
+    # Punto 1: Origine (Nati in Italia vs Estero)
+    origine = case_when(
+      BIRTHPLACE2 == 10 ~ "Nati in Italia",
+      BIRTHPLACE2 == 20 ~ "Nati all'Estero",
+      TRUE ~ NA_character_
+    ),
+    # Punto 2: Rinuncia alle cure
+    rinuncia = case_when(
+      UN1A == 1 | UN1B == 1 ~ 1,
+      UN1A == 2 & UN1B == 2 ~ 0,
+      TRUE ~ NA_real_
+    )
+  ) %>%
+  # Rimuoviamo i casi inutilizzabili
+  filter(!is.na(origine), !is.na(rinuncia))
+
+# 4. CALCOLO DELLO SCORE DEPRESSIONE (Metodo sicuro)
+# 1. Definiamo le colonne
+colonne_mh1 <- c("MH1A", "MH1B", "MH1C", "MH1D", "MH1E", "MH1F", "MH1G", "MH1H")
+
+# 2. Creiamo lo score correttamente
+df_analisi <- df_analisi %>%
+  # Creiamo una copia temporanea delle colonne per non sporcare l'originale
+  mutate(across(all_of(colonne_mh1), ~case_when(
+    .x == 1 ~ 3, # Sintomi sempre
+    .x == 2 ~ 2,
+    .x == 3 ~ 1,
+    .x == 4 ~ 0,
+    .x == 5 ~ 0, # Sintomi mai
+    TRUE ~ NA_real_ # I negativi diventano NA (non risponde)
+  ))) %>%
+  # Calcoliamo lo score solo se l'utente ha risposto a TUTTE le 8 domande
+  mutate(score_dep = rowSums(select(., all_of(colonne_mh1)))) %>%
+  # Rimuoviamo chi ha NA nello score per non avere medie falsate
+  filter(!is.na(score_dep))
+
+# 5. Creazione del disegno campionario (ora 'score_dep' esiste per forza!)
+disegno <- svydesign(ids = ~1, weights = ~WGT, data = df_analisi)
+
+
+```
+
+### Caratteristiche dei dati
+- **Fonte:** Microdati ISTAT, indagine EHIS (European Health Interview Survey).
+- **Anno di riferimento:** 2019 (Wave 3).
+- **Campione:** Popolazione residente in Italia di età superiore ai 15 anni.
+- **Metodologia:** Analisi pesata tramite la variabile di riporto all'universo `WGT`.
+
+### Variabili Selezionate
+- **Target:** `UN1A` (Rinuncia a prestazioni sanitarie).
+- **Predittori:** Score PHQ-8 (Depressione), `BIRTHPLACE2` (Cittadinanza), `RIP` (Ripartizione geografica).
+
+## Obiettivi della Ricerca
+
+### Domanda Principale
+Esistono barriere sistematiche che impediscono l'accesso paritario alle cure in Italia?
+
+### Sotto-obiettivi (Ipotesi)
+1. **Salute Mentale:** Verificare se la depressione sia un fattore predittivo della rinuncia alle cure.
+2. **Cittadinanza:** Misurare il gap di accesso tra cittadini nati in Italia e nati all'estero.
+3. **Effetto Buffer:** Analizzare se il sistema sanitario regionale riesce a mitigare le fragilità individuali.
+
+## Analisi Descrittiva: La "Base" dei Dati
+
+In questa fase analizziamo la prevalenza della rinuncia e la distribuzione dello score di depressione, tenendo conto della struttura campionaria.
+
+```{r}
+#| echo: false
+#| results: 'asis'
+
+library(knitr)
+library(kableExtra)
+
+# 1. Calcolo prevalenza rinuncia (Media pesata)
+prev_rinuncia <- svymean(~rinuncia, disegno, na.rm = TRUE)
+
+# 2. Calcolo media score depressione
+media_dep <- svymean(~score_dep, disegno, na.rm = TRUE)
+
+# 3. Creazione di una tabella di sintesi
+descrittive <- data.frame(
+  Indicatore = c("Tasso di Rinuncia (Medio)", "Score Depressione (Medio)"),
+  Valore = c(
+    paste0(round(as.numeric(prev_rinuncia) * 100, 2), "%"),
+    round(as.numeric(media_dep), 2)
+  ),
+  `Errore Standard` = c(
+    round(SE(prev_rinuncia), 4),
+    round(SE(media_dep), 4)
+  )
+)
+
+kable(descrittive, format = "latex", booktabs = TRUE, caption = "Statistiche descrittive pesate (2019)") %>%
+  kable_styling(latex_options = "striped")
+```
+
+## Disuguaglianze e Cittadinanza
+
+Esiste un divario nell'accesso alle cure tra i cittadini nati in Italia e quelli nati all'estero?
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-align: "center"
+#| fig-height: 4
+
+library(ggplot2)
+library(scales)
+
+# 1. Calcolo della rinuncia per gruppo (Straniero vs Italiano)
+gap_cittadinanza <- svyby(~rinuncia, ~origine, disegno, svymean, na.rm = TRUE)
+
+# 2. Creazione del Grafico
+# --- Calcolo delle medie pesate per il grafico ---
+gap_origine <- df_analisi %>%
+  group_by(origine) %>%
+  summarise(
+    # Calcolo della percentuale pesata di rinuncia
+    percentuale_rinuncia = sum(rinuncia * WGT, na.rm = TRUE) / sum(WGT, na.rm = TRUE),
+    # Errore standard approssimato per le barre di errore
+    se = sd(rinuncia, na.rm = TRUE) / sqrt(n()) 
+  )
+
+# --- Creazione del Grafico ---
+ggplot(gap_origine, aes(x = origine, y = percentuale_rinuncia, fill = origine)) +
+  geom_bar(stat = "identity", width = 0.6, show.legend = FALSE) +
+  geom_errorbar(aes(ymin = percentuale_rinuncia - se, ymax = percentuale_rinuncia + se), 
+                width = 0.1, color = "black") +
+  scale_y_continuous(labels = scales::percent_format())  +
+  scale_fill_manual(values = c("Nati in Italia" = "#2c7fb8", "Nati all'Estero" = "#f03b20")) +
+  labs(
+    title = "Rinuncia alle cure per Paese di Nascita",
+    subtitle = "Percentuale di individui che hanno rinunciato a prestazioni sanitarie",
+    x = "Luogo di Nascita",
+    y = "% Rinuncia"
+  ) +
+  theme_minimal(base_size = 14)
+  coord_cartesian(ylim = c(0.24, 0.29))
+```
+
+## Salute Mentale e Barriere all'Accesso
+
+Il disagio psichico rappresenta un ostacolo alla richiesta di cure? Confronto della distribuzione dello score PHQ-8.
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-align: "center"
+#| fig-height: 4
+
+# Creazione del Boxplot pesato
+# Creiamo una versione "parlante" della variabile rinuncia per il grafico
+df_analisi <- df_analisi %>%
+  mutate(rinuncia_label = if_else(rinuncia == 1, "Ha Rinunciato", "Non ha Rinunciato"))
+
+# Grafico Boxplot: Relazione tra Rinuncia e Depressione
+ggplot(df_analisi, aes(x = rinuncia_label, y = score_dep, fill = rinuncia_label)) +
+  geom_boxplot(alpha = 0.7, outlier.color = "red", outlier.shape = 1) +
+  # Aggiungiamo le medie come punti per renderlo più chiaro
+  stat_summary(fun = mean, geom = "point", shape = 18, size = 4, color = "yellow") +
+  scale_fill_manual(values = c("Ha Rinunciato" = "#d73027", "Non ha Rinunciato" = "#4575b4")) +
+  labs(
+    title = "Relazione tra Salute Mentale e Rinuncia alle Cure",
+    subtitle = "Il punto giallo indica la media dello score PHQ-8",
+    x = "Stato di Rinuncia",
+    y = "Score Depressione (PHQ-8)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+## L'Effetto Buffer: Il Ruolo del Territorio
+
+La rinuncia alle cure è distribuita equamente o riflette le fragilità strutturali delle diverse aree del Paese?
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-align: "center"
+#| fig-height: 4
+
+# 1. Calcolo della rinuncia per Ripartizione (1=NO, 2=NE, 3=Centro, 4=Sud, 5=Isole)
+gap_territorio <- svyby(~rinuncia, ~RIP, disegno, svymean, na.rm = TRUE)
+
+# 2. Grafico a barre per Ripartizione
+ggplot(gap_territorio, aes(x = factor(RIP, labels = c("Nord-O", "Nord-E", "Centro", "Sud", "Isole")), 
+                            y = rinuncia, fill = factor(RIP))) +
+  geom_bar(stat = "identity", show.legend = FALSE, width = 0.7) +
+  geom_errorbar(aes(ymin = rinuncia - se, ymax = rinuncia + se), width = 0.2) +
+  scale_fill_viridis_d(option = "mako", begin = 0.3, end = 0.8) + 
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(title = "Tasso di Rinuncia per Ripartizione Geografica",
+       subtitle = "Confronto tra le macro-aree italiane (2019)",
+       x = "Ripartizione", 
+       y = "% Rinuncia") +
+  theme_minimal(base_size = 14)
+```
+
+## Conclusioni Preliminari e Prospettive
+
+### Sintesi dei Risultati
+- **Vulnerabilità Sociale:** Si conferma un gap significativo nell'accesso alle cure per i cittadini nati all'estero.
+- **Barriera Psicologica:** Esiste una forte associazione tra bassi livelli di salute mentale (score PHQ-8 elevati) e la rinuncia alle prestazioni sanitarie.
+- **Divario Territoriale:** La geografia della salute in Italia resta frammentata, con criticità maggiori nel Mezzogiorno (Effetto Buffer).
+
+### Limiti e Sviluppi Futuri
+- **Analisi Multivariata:** Il prossimo passo sarà l'implementazione di un modello di regressione logistica per isolare l'effetto di ogni variabile a parità di altre condizioni (es. reddito, età).
+- **Confronto Temporale:** Analisi del trend 2015-2019 per verificare se le disuguaglianze si siano colmate o accentuate nel tempo.
