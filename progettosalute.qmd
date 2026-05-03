@@ -8,7 +8,7 @@ title: |
   \end{center}
   \vfill
   \begin{center}
-  {\Huge \textbf{Fattori che influenzano il numero di omicidi in Italia}}\\[0.5cm]
+  {\Huge \textbf{Rinuncia alle cure e disuguaglianze in Italia}}\\[0.5cm]
   {\Large (Utilizzo Statistico di Banche Dati Economiche Online)}
   \end{center}
   \vfill
