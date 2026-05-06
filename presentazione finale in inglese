@@ -1,0 +1,117 @@
+title: "Health Inequalities in Italy"
+subtitle: "EHIS 2015 vs 2019 Comparative Analysis"
+author: "Giordani, Cupioli, Parma, Calderoni, D'Errigo"
+date: last-modified
+format: 
+  beamer:
+    # Madrid theme: professional, includes header/footer with sections and page numbers
+    theme: Madrid
+    # Whale color theme: dark blue and sober, ideal for academic presentations
+    colortheme: whale
+    # 16:9 aspect ratio for modern screens (optional, remove for classic 4:3)
+    aspectratio: 169
+    # Lists appear one point at a time
+    section-titles: true
+    # LaTeX integrations for professional tables and symbols
+    header-includes:
+      - \usepackage{booktabs}
+      - \usepackage{siunitx}
+      - \setbeamertemplate{navigation symbols}{} # Remove bottom navigation icons
+      - \setbeamertemplate{page number in foot}[framenumber] # Clear page numbers
+
+# Execution settings for R code
+execute:
+  echo: false      # Do not show code in slides
+  warning: false   # Do not show warnings
+  message: false   # Do not show package loading messages
+  cache: true      # Speeds up rendering if data is large
+---
+#| label: setup
+#| include: false
+
+library(here)
+library(tidyverse)
+library(survey)
+library(readxl)
+
+# 1. FLEXIBLE CLEANING FUNCTION (CORRECTED)
+clean_ehis <- function(df, year_label) {
+  
+  # Identify birthplace variable (BIRTHPLACE or BIRTHPLACE2)
+  birth_var <- intersect(names(df), c("BIRTHPLACE2", "BIRTHPLACE"))[1]
+  
+  # PHQ-8 columns
+  mh1_columns <- c("MH1A", "MH1B", "MH1C", "MH1D", "MH1E", "MH1F", "MH1G", "MH1H")
+  
+  df %>%
+    # Select required columns
+    select(WGT, RIP, any_of(c("UN1A", "UN1B")), all_of(mh1_columns), all_of(birth_var)) %>%
+    # Convert to numeric
+    mutate(across(everything(), ~suppressWarnings(as.numeric(as.character(.))))) %>%
+    mutate(
+      year = year_label,
+      
+      # ORIGIN HANDLING
+      origin = case_when(
+        .data[[birth_var]] == 10 ~ "Born in Italy",
+        .data[[birth_var]] == 20 ~ "Born Abroad",
+        TRUE ~ NA_character_ 
+      ),
+      
+      # UNMET NEEDS
+      unmet = case_when(
+        UN1A == 1 | UN1B == 1 ~ 1,
+        UN1A %in% c(2, 3) & UN1B %in% c(2, 3) ~ 0,
+        TRUE ~ NA_real_
+      )
+    ) %>%
+    # PHQ-8 REVERSE CODING
+    mutate(across(all_of(mh1_columns), ~case_when(
+      .x == 1 ~ 3,
+      .x == 2 ~ 2,
+      .x == 3 ~ 1,
+      .x %in% c(4, 5) ~ 0,
+      TRUE ~ NA_real_
+    ))) %>%
+    # Depression score
+    mutate(depression_score = rowSums(select(., all_of(mh1_columns)), na.rm = FALSE)) %>%
+    # Final cleaning
+    filter(!is.na(origin), !is.na(unmet), !is.na(depression_score))
+}
+
+# 2. DATA LOADING
+df2019 <- read_delim(here("EHIS_Microdata_2019.txt"), delim = "\t") %>% clean_ehis(2019)
+df2015 <- read_excel(here("MICRODATA 2015 HEIS (1).xlsx")) %>% clean_ehis(2015)
+
+# 3. MERGE AND SURVEY DESIGN
+df_comparison <- bind_rows(df2015, df2019)
+survey_design <- svydesign(ids = ~1, weights = ~WGT, data = df_comparison)
+# Methodology
+
+## Data: EHIS Wave 2 e Wave 3
+- **Data source:** European Health Interview Survey (EHIS), conduced by ISTAT.
+- **Observation periods:**
+    - **2015 (Wave 2):** Pre-existing context analysis.
+    - **2019 (Wave 3):** Pre-pandemic context analysis.
+- **Population:** Individuals aged 15+ living in Italy.
+- **Representativeness:** Use of survey weight `WGT` to correct sampling bias.
+
+## Key Variables and Harmonization
+- **Dependent variable (Target):** Unmet heathcare needs (`UNMET_NEEDS`).
+- **Main predictor:** Mental health score **PHQ-8**.
+    - Somma di 8 item su frequenza dei sintomi depressivi (Scala 0-24).
+- **Controlli e Stratificazioni:**
+    - Demografici: Sesso, Età (`AGE_CLA75`).
+    - Socio-economici: Titolo di studio, Reddito, Cittadinanza.
+    - Territoriali: Ripartizione geografica (Verifica dell'**Effetto Buffer**).
+
+# Analisi Descrittiva: Il Confronto 2015-2019
+
+## Evoluzione della Rinuncia alle Cure
+- La domanda centrale: l'accesso ai servizi è migliorato o peggiorato?
+- Confronto delle frequenze relative pesate tra il 2015 e il 2019.
+- Analisi delle motivazioni prevalenti:
+    1. Motivi economici.
+    2. Liste d'attesa.
+    3. Distanza dai centri di cura.
+
