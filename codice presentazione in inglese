@@ -1,0 +1,337 @@
+title: "Health Inequalities in Italy"
+subtitle: "EHIS 2015 vs 2019 Comparative Analysis"
+author: "Giordani, Cupioli, Parma, Calderoni, D'Errigo"
+date: last-modified
+format: 
+  beamer:
+    # Madrid theme: professional, includes header/footer with sections and page numbers
+    theme: Madrid
+    # Whale color theme: dark blue and sober, ideal for academic presentations
+    colortheme: whale
+    # 16:9 aspect ratio for modern screens (optional, remove for classic 4:3)
+    aspectratio: 169
+    # Lists appear one point at a time
+    section-titles: true
+    # LaTeX integrations for professional tables and symbols
+    header-includes:
+      - \usepackage{booktabs}
+      - \usepackage{siunitx}
+      - \setbeamertemplate{navigation symbols}{} # Remove bottom navigation icons
+      - \setbeamertemplate{page number in foot}[framenumber] # Clear page numbers
+
+# Execution settings for R code
+execute:
+  echo: false      # Do not show code in slides
+  warning: false   # Do not show warnings
+  message: false   # Do not show package loading messages
+  cache: true      # Speeds up rendering if data is large
+---
+```{r}
+#| label: setup
+#| include: false
+
+library(here)
+library(tidyverse)
+library(survey)
+library(readxl)
+
+# 1. FLEXIBLE CLEANING FUNCTION (CORRECTED)
+clean_ehis <- function(df, year_label) {
+  
+  # Identify birthplace variable (BIRTHPLACE or BIRTHPLACE2)
+  birth_var <- intersect(names(df), c("BIRTHPLACE2", "BIRTHPLACE"))[1]
+  
+  # PHQ-8 columns
+  mh1_columns <- c("MH1A", "MH1B", "MH1C", "MH1D", "MH1E", "MH1F", "MH1G", "MH1H")
+  
+  df %>%
+    # Select required columns
+    select(WGT, RIP, any_of(c("UN1A", "UN1B")), all_of(mh1_columns), all_of(birth_var)) %>%
+    # Convert to numeric
+    mutate(across(everything(), ~suppressWarnings(as.numeric(as.character(.))))) %>%
+    mutate(
+      year = year_label,
+      
+      # ORIGIN HANDLING
+      origin = case_when(
+        .data[[birth_var]] == 10 ~ "Born in Italy",
+        .data[[birth_var]] == 20 ~ "Born Abroad",
+        TRUE ~ NA_character_ 
+      ),
+      
+      # UNMET NEEDS
+      unmet = case_when(
+        UN1A == 1 | UN1B == 1 ~ 1,
+        UN1A %in% c(2, 3) & UN1B %in% c(2, 3) ~ 0,
+        TRUE ~ NA_real_
+      )
+    ) %>%
+    # PHQ-8 REVERSE CODING
+    mutate(across(all_of(mh1_columns), ~case_when(
+      .x == 1 ~ 3,
+      .x == 2 ~ 2,
+      .x == 3 ~ 1,
+      .x %in% c(4, 5) ~ 0,
+      TRUE ~ NA_real_
+    ))) %>%
+    # Depression score
+    mutate(depression_score = rowSums(select(., all_of(mh1_columns)), na.rm = FALSE)) %>%
+    # Final cleaning
+    filter(!is.na(origin), !is.na(unmet), !is.na(depression_score))
+}
+
+# 2. DATA LOADING
+df2019 <- read_delim(here("EHIS_Microdata_2019.txt"), delim = "\t") %>% clean_ehis(2019)
+df2015 <- read_excel(here("MICRODATA 2015 HEIS (1).xlsx")) %>% clean_ehis(2015)
+
+# 3. MERGE AND SURVEY DESIGN
+df_comparison <- bind_rows(df2015, df2019)
+survey_design <- svydesign(ids = ~1, weights = ~WGT, data = df_comparison)
+```
+#Methodology
+
+## The Data: EHIS Wave 2 and Wave 3
+- **Data source:** European Health Interview Survey (EHIS), conducted by ISTAT.
+- **Observation fields:**
+    - **2015 (Wave 2):** Analysis of the pre-existing context.
+    - **2019 (Wave 3):** Pre-pandemic context analysis.
+- **Population:** Individuals over the age of 15 residing in Italy.
+- **Representativeness:** Systematic use of the weighting variable 'WGT' to correct for sampling biases.
+
+## Key Variables and Harmonization
+- **Employee Variable (Target):** Waiver of Health Benefits ('UNMET_NEEDS').
+- **Main Predictive Variable:** Mental Health Score **PHQ-8**.
+    - Sum of 8 items on frequency of depressive symptoms (Scale 0-24).
+- **Checks and Stratifications:**
+    - Demographics: Gender, Age ('AGE_CLA75').
+    - Socio-economic: Educational qualification, Income, Citizenship.
+    - Territorials: Geographical distribution (Verification of the **Buffer Effect**).
+
+# Descriptive Analysis: The Comparison 2015-2019
+
+## Evolution of Care Giving Up
+- The central question: has access to services improved or worsened?
+- Comparison of weighted relative frequencies between 2015 and 2019.
+- Analysis of the prevailing motivations:
+    1. Economic reasons.
+    2. Waiting lists.
+    3. Distance from treatment centers.
+
+
+# Results: The 2015-2019 Comparison
+
+## Evolution of Care Giving Up
+Analysis of the change in the share of the population with unmet health needs (*Unmet Needs*).
+```{r}
+#| label: fig-trend-renunciation
+#| fig-height: 3.5
+#| fig-align: center
+
+# Calculation of weighted means of the 'renunciation' variable by reference year
+res_trend <- svyby(~rinuncia, ~anno, disegno_totale, svymean, na.rm = TRUE)
+
+# Generation of the comparative chart
+ggplot(res_trend, aes(x = factor(anno), y = rinuncia, fill = factor(anno))) +
+  geom_bar(stat = "identity", width = 0.5, color = "black") +
+  geom_text(aes(label = scales::percent(rinuncia, accuracy = 0.1)), 
+            vjust = -0.5, fontface = "bold", size = 4) +
+  scale_y_continuous(labels = scales::percent, limits = c(0, max(res_trend$rinuncia) * 1.2)) +
+  scale_fill_manual(values = c("#34495e", "#e74c3c")) +
+  labs(title = "Prevalence of renunciation of care (2015–2019)",
+       subtitle = "Weighted percentage of the resident population",
+       x = "Year of survey", 
+       y = "Renunciation (%)") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        panel.grid.major.x = element_blank())
+```
+## Renunciation of Treatment and Territory (2015 vs 2019)
+
+Geographical breakdown is a key determinant of equity of access. Below is the legend of the analyzed areas:
+**1**: Northwest | **2**: Northeast | **3**: Center | **4**: South | **5**: Islands
+```{r}
+#| label: fig-geography-time
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-height: 4.5
+
+library(dplyr)
+
+# We rename the levels of the RIP variable for visualization
+# Replace the names in quotes if your numeric codes correspond to different areas
+disegno_totale$variables <- disegno_totale$variables %>%
+  mutate(RIP_label = case_when(
+    RIP == 1 ~ "North-West",
+    RIP == 2 ~ "North-East",
+    RIP == 3 ~ "Central",
+    RIP == 4 ~ "South",
+    RIP == 5 ~ "Islands",
+    TRUE ~ as.character(RIP)
+  ))
+
+# We recompute proportions using the new labels
+prop_rip_anno <- svyby(~rinuncia, ~RIP_label + anno, disegno_totale, svymean, na.rm = TRUE)
+
+ggplot(prop_rip_anno, aes(x = reorder(RIP_label, renunciation), y = renunciation, fill = as.factor(year))) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7) +
+  geom_errorbar(aes(ymin = renunciation - se, ymax = renunciation + se), 
+                position = position_dodge(width = 0.8), width = 0.2) +
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_manual(values = c("#95a5a6", "#2c3e50"), name = "Year") +
+  coord_flip() +
+  labs(title = "Renunciation by Geographic Area (Expanded Labels)",
+       x = "Geographic Area", y = "% Renunciation") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+## The gap between those born in Italy and those born abroad
+
+Analysis of migration background reveals how foreign-born status represents a constant risk factor for access to services.
+```{r}
+#| label: fig-origin-time
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-height: 4.5
+
+# Calculation of proportions by Origin and Year
+prop_orig_anno <- svyby(~renunciation, ~origin + year, survey_design, svymean, na.rm = TRUE)
+
+ggplot(prop_orig_anno, aes(x = origin, y = renunciation, fill = as.factor(year))) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7) +
+  geom_errorbar(aes(ymin = renunciation - se, ymax = renunciation + se), 
+                position = position_dodge(width = 0.8), width = 0.2) +
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_manual(values = c("#3498db", "#e74c3c"), name = "Year") +
+  labs(title = "Renunciation of care by respondent origin",
+       x = "Migration background", y = "% Population renouncing care") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+## Mental Health: Evolution of the PHQ-8 score
+Analysis of the distribution of depressive symptoms in the Italian population using the synthetic PHQ-8 score (scale 0-24).
+```{r}
+#| label: fig-phq8-rigorous
+#| fig-height: 3.8
+#| fig-align: center
+
+# Rigorous calculation: mean, standard error, and 95% confidence intervals
+res_phq8 <- svyby(~score_dep, ~year, survey_design, svymean, na.rm = TRUE) %>%
+            mutate(low = score_dep - 1.96*se, high = score_dep + 1.96*se)
+
+ggplot(res_phq8, aes(x = factor(year), y = score_dep, fill = factor(year))) +
+  # Bars with transparency for aesthetic rigor
+  geom_bar(stat = "identity", width = 0.5, color = "black", alpha = 0.8) +
+  # 95% confidence intervals (essential for rigor)
+  geom_errorbar(aes(ymin = low, ymax = high), width = 0.15, size = 0.8) +
+  # Labels with two decimal places
+  geom_text(aes(label = sprintf("%.2f", score_dep)), vjust = -2.5, fontface = "bold") +
+  scale_fill_manual(values = c("#2c3e50", "#27ae60")) +
+  scale_y_continuous(limits = c(0, max(res_phq8$high) * 1.2)) +
+  labs(title = "Average PHQ-8 score of the Italian population",
+       subtitle = "Weighted estimates with 95% confidence intervals",
+       x = "Year of survey", 
+       y = "Mean PHQ-8 Score") +
+  theme_minimal() +
+  theme(panel.grid.minor = element_blank(),
+        legend.position = "none")
+```
+## Determinants of the waiver: Multivariate Analysis
+The analysis using a weighted logistic model allows us to isolate the net effect of each predictor. The table shows Odds Ratio (OR): values above 1 indicate an increased probability of giving up care.
+```{r}
+#| label: regression-table
+#| echo: false
+#| message: false
+#| warning: false
+
+library(broom)
+library(knitr)
+
+# Model estimation with RIP as a factor
+# We use 'as.factor(RIP)' to avoid the linear trend assumption
+final_model <- svyglm(renunciation ~ score_dep + origin + year + as.factor(RIP), 
+                      design = survey_design, 
+                      family = quasibinomial())
+# Cleaning and formatting results
+results_table <- tidy(final_model, conf.int = TRUE, exponentiate = TRUE) %>%
+  filter(term != "(Intercept)") %>%
+  # Rename terms to make them readable in the table
+  mutate(term = str_replace(term, "as.factor\\(RIP\\)2", "North-West"),
+         term = str_replace(term, "as.factor\\(RIP\\)3", "Central"),
+         term = str_replace(term, "as.factor\\(RIP\\)4", "South"),
+         term = str_replace(term, "as.factor\\(RIP\\)5", "Islands"),
+         term = str_replace(term, "score_dep", "PHQ-8 Score"),
+         term = str_replace(term, "origineNati in Italia", "Ref: Born in Italy"), # R usually places the alphabetical category first
+         term = str_replace(term, "origineNati all'Estero", "Born Abroad")) %>%
+  select(term, estimate, conf.low, conf.high, p.value) %>%
+  mutate(across(where(is.numeric), ~round(., 3)))
+```
+## Factor Impact: Odds Ratio Forest Plot
+
+Graphical visualization of Odds Ratios allows you to compare the intensity of barriers to access. The values to the right of the red line (OR=1) represent an increase in the probability of giving up.
+```{r}
+#| label: fig-forest-plot
+#| echo: false
+#| fig-height: 5
+
+# 1. Retrieve the data and manually add the reference
+plot_data <- tidy(final_model, conf.int = TRUE, exponentiate = TRUE) %>%
+  filter(term != "(Intercept)") %>%
+  mutate(term = case_when(
+    term == "score_dep" ~ "PHQ-8 Score (Mental Health)",
+    term == "origineNati all'Estero" ~ "Born Abroad",
+    term == "anno" ~ "Time Effect (2015–2019)",
+    term == "as.factor(RIP)2" ~ "Residence: North-East",
+    term == "as.factor(RIP)3" ~ "Residence: Central",
+    term == "as.factor(RIP)4" ~ "Residence: South",
+    term == "as.factor(RIP)5" ~ "Residence: Islands",
+    TRUE ~ term
+  ))
+
+# Add a dummy row for Italy as visual reference
+italy_reference <- data.frame(
+  term = "Born in Italy (Reference)",
+  estimate = 1,
+  conf.low = 1,
+  conf.high = 1
+)
+
+plot_data_complete <- bind_rows(plot_data, italy_reference)
+
+# 2. Plot
+ggplot(plot_data_complete, aes(x = reorder(term, estimate), y = estimate)) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "red", size = 1) +
+  geom_pointrange(aes(ymin = conf.low, ymax = conf.high), 
+                  color = ifelse(plot_data_complete$term == "Born in Italy (Reference)", "grey", "#2c3e50"), 
+                  size = 0.7) +
+  scale_y_log10() +
+  coord_flip() +
+  labs(title = "Risk Factors for Renunciation of Care",
+       subtitle = "Comparison highlights disadvantage of foreign-born individuals",
+       x = "", y = "Odds Ratio (Log Scale)") +
+  theme_minimal()
+```
+## Slide 10: Interpreting Multivariate Analysis
+
+Analysis using a logistic model (Odds Ratio) allows us to isolate the effect of each variable "net" of the others. Three main lines of evidence emerge from the results:
+
+* **The "Weight" of Geography**: Residence in **Noon and the Islands** represents the most critical barrier. The risk of opting out is significantly higher than in the North, suggesting a structural disparity in the provision of regional health services.
+* **Abroadborn Vulnerability**: Even controlling for residence and health, being born abroad increases the likelihood of forgoing necessary care. This indicates the existence of specific barriers (linguistic, bureaucratic or network) not explained by economic or geographical condition alone.
+* **Mental Health as Multiplier**: The positive association between score **PHQ-8** and renunciation confirms that psychological distress acts as an obstacle to access. Those who suffer from depressive symptoms are more likely to neglect their physical health needs as well.
+* **Stability of the Phenomenon**: The temporal factor (2015-2019) shows an inertia in inequalities, reporting that the access barriers for vulnerable groups remained substantially unchanged in the five-year period analyzed.
+
+## Conclusions and Future Perspectives
+
+### Research Summary
+* **Erosion of Universality**: The findings highlight that access to care is not fully universal.
+* **The "Sum" Effect**: Maximum vulnerability is observed at the intersection of residence in Southern Italy and psychological fragility, confirming the need for targeted interventions.
+---
+
+### Future Perspectives and Policies
+* **Service Integration**: Overcome the separation between physical and mental care by promoting the PHQ-8 as a screening tool to identify patients at risk of treatment abandonment.
+* **Mediation and Proximity**: Strengthening community medicine.
+* **Post-Pandemic Analysis**: Verify the impact of COVID-19 on identified gaps.
+
+
+
